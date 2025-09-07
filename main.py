@@ -196,7 +196,7 @@ def main():
         results = []
         
         # 并行处理 (如果指定)
-        if args.parallel and args.parallel > 1:
+        if args.parallel and args.parallel > 8:
             print(f"🔄 使用 {args.parallel} 个线程并行处理...")
             from concurrent.futures import ThreadPoolExecutor, as_completed
             

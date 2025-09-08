@@ -29,9 +29,16 @@ class ErrorDetector:
         segments = self.text_processor.parse_transcription_file(input_file)
         print(f"解析得到 {len(segments)} 个文本段落")
         
-        # 2. 批量检测和自动修正
+        # 2. 批量检测和自动修正 - 使用优化版批量处理
         print("开始错误检测和自动修正...")
+        print("使用批量处理模式，大幅减少API调用次数和token消耗...")
+        
+        start_time = time.time()
         results = self.glm_client.batch_detect_and_correct_segments(segments)
+        end_time = time.time()
+        
+        processing_time = end_time - start_time
+        print(f"批量处理完成，耗时: {processing_time:.1f}秒")
         
         # 3. 生成检测报告
         report_path = self._generate_correction_report(results, input_file)
@@ -60,9 +67,14 @@ class ErrorDetector:
         corrected_segments = sum(1 for r in results if r.get('has_errors', False))
         api_errors = sum(1 for r in results if 'error' in r)
         
+        # 统计处理方式
+        batch_api_count = len([r for r in results if r.get('method') == 'batch_api'])
+        quick_fix_count = len([r for r in results if r.get('method') == 'quick_fix'])
+        pre_filter_count = len([r for r in results if r.get('method') == 'pre_filter'])
+        
         with open(report_path, 'w', encoding='utf-8') as f:
             f.write("=" * 70 + "\n")
-            f.write("语音转录文本自动修正报告\n")
+            f.write("语音转录文本自动修正报告 (批量优化版)\n")
             f.write("=" * 70 + "\n")
             f.write(f"输入文件: {input_file}\n")
             f.write(f"处理时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -71,6 +83,13 @@ class ErrorDetector:
             f.write(f"修正率: {corrected_segments/total_segments*100:.2f}%\n")
             if api_errors > 0:
                 f.write(f"API错误数: {api_errors}\n")
+            
+            # 新增：处理方式统计
+            f.write(f"\n处理方式分布:\n")
+            f.write(f"  批量API处理: {batch_api_count} ({batch_api_count/total_segments*100:.1f}%)\n")
+            f.write(f"  快速修正: {quick_fix_count} ({quick_fix_count/total_segments*100:.1f}%)\n")
+            f.write(f"  预过滤跳过: {pre_filter_count} ({pre_filter_count/total_segments*100:.1f}%)\n")
+            
             f.write("\n" + "=" * 70 + "\n")
             f.write("详细修正列表\n")
             f.write("=" * 70 + "\n\n")
@@ -80,6 +99,7 @@ class ErrorDetector:
                 f.write(f"【段落 {i}】\n")
                 f.write(f"时间: {result.get('timestamp', 'Unknown')}\n")
                 f.write(f"发言人: {result.get('speaker', 'Unknown')}\n")
+                f.write(f"处理方式: {result.get('method', 'Unknown')}\n")
                 
                 # 检查是否有API错误
                 if 'error' in result:
@@ -120,7 +140,7 @@ class ErrorDetector:
         corrected_path = os.path.join(Config.OUTPUT_DIR, f"{filename}_corrected_{timestamp}.txt")
         
         with open(corrected_path, 'w', encoding='utf-8') as f:
-            f.write(f"{filename} - 自动修正版\n\n")
+            f.write(f"{filename} - 自动修正版 (批量处理优化)\n\n")
             f.write(f"修正时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write(f"原始文件: {input_file}\n")
             f.write("=" * 50 + "\n\n")
@@ -152,12 +172,17 @@ class ErrorDetector:
 
     def _print_correction_summary(self, results: List[Dict]):
         """
-        打印修正统计摘要
+        打印修正统计摘要 - 包含优化效果
         """
         total = len(results)
         corrected = sum(1 for r in results if r.get('has_errors', False))
         errors = sum(1 for r in results if 'error' in r)
         unchanged = total - corrected - errors
+        
+        # 统计处理方式
+        batch_api_count = len([r for r in results if r.get('method') == 'batch_api'])
+        quick_fix_count = len([r for r in results if r.get('method') == 'quick_fix'])
+        pre_filter_count = len([r for r in results if r.get('method') == 'pre_filter'])
         
         print("\n" + "=" * 50)
         print("📊 修正统计摘要")
@@ -167,4 +192,9 @@ class ErrorDetector:
         print(f"无需修正: {unchanged} ({unchanged/total*100:.1f}%)")
         if errors > 0:
             print(f"处理失败: {errors} ({errors/total*100:.1f}%)")
+        
+        print(f"\n批量处理优化效果:")
+        print(f"批量API处理: {batch_api_count} ({batch_api_count/total*100:.1f}%)")
+        print(f"快速修正: {quick_fix_count} ({quick_fix_count/total*100:.1f}%)")
+        print(f"预过滤跳过: {pre_filter_count} ({pre_filter_count/total*100:.1f}%)")
         print("=" * 50)

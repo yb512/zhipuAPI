@@ -86,19 +86,21 @@ def configure_high_api_usage(detector: ErrorDetector, mode: str = 'high'):
 
 def process_single_file(detector: ErrorDetector, file_path: str, args) -> dict:
     """
-    处理单个文件 - 修复版本
+    处理单个文件 - 修复版本，默认生成报告和修正文件
     """
     try:
         print(f"\n📄 处理文件: {file_path}")
         start_time = time.time()
         
         if args.only_correct:
-            # 只生成修正文件
+            # 只生成修正文件（显式指定时）
             corrected_path = detector.detect_and_correct_file_only_correct(file_path)
             report_path = None
+            print("💡 使用快速模式：只生成修正文件")
         else:
-            # 生成报告和修正文件
+            # 默认：生成报告和修正文件
             report_path, corrected_path = detector.detect_and_correct_file(file_path)
+            print("📊 使用完整模式：生成报告和修正文件")
         
         end_time = time.time()
         processing_time = end_time - start_time
@@ -136,6 +138,10 @@ def generate_batch_summary(results: list, output_dir: str) -> str:
     failed_files = total_files - successful_files
     total_time = sum(r['processing_time'] for r in results)
     
+    # 统计报告生成情况
+    reports_generated = len([r for r in results if r['status'] == 'success' and r['report_path']])
+    corrections_generated = len([r for r in results if r['status'] == 'success' and r['corrected_path']])
+    
     with open(summary_path, 'w', encoding='utf-8') as f:
         f.write("=" * 70 + "\n")
         f.write("批量处理总结报告 (修复优化版)\n")
@@ -146,7 +152,10 @@ def generate_batch_summary(results: list, output_dir: str) -> str:
         f.write(f"处理失败: {failed_files}\n")
         f.write(f"成功率: {successful_files/total_files*100:.1f}%\n")
         f.write(f"总耗时: {total_time:.1f}秒\n")
-        f.write(f"平均耗时: {total_time/total_files:.1f}秒/文件\n\n")
+        f.write(f"平均耗时: {total_time/total_files:.1f}秒/文件\n")
+        f.write(f"\n输出统计:\n")
+        f.write(f"生成报告数: {reports_generated}\n")
+        f.write(f"生成修正文件数: {corrections_generated}\n\n")
         
         f.write("=" * 70 + "\n")
         f.write("详细处理结果\n")
@@ -162,6 +171,8 @@ def generate_batch_summary(results: list, output_dir: str) -> str:
                     f.write(f"耗时: {result['processing_time']:.1f}秒\n")
                     if result['report_path']:
                         f.write(f"报告: {result['report_path']}\n")
+                    else:
+                        f.write(f"报告: 未生成（快速模式）\n")
                     f.write(f"修正: {result['corrected_path']}\n\n")
         
         # 失败处理的文件
@@ -180,8 +191,8 @@ def main():
     parser.add_argument('input', help='输入文件/目录路径或通配符模式 (如 "*.txt" 或 "transcripts/")')
     parser.add_argument('--api-key', help='GLM API密钥（可选，优先使用环境变量）')
     parser.add_argument('--recursive', '-r', action='store_true', help='递归处理子目录中的文件')
-    parser.add_argument('--correct', action='store_true', help='同时生成纠错版本')
-    parser.add_argument('--only-correct', action='store_true', help='只生成纠错版本，不生成检测报告')
+    parser.add_argument('--correct', action='store_true', help='生成纠错版本和详细报告（推荐模式）')
+    parser.add_argument('--only-correct', action='store_true', help='只生成纠错版本，不生成检测报告（快速模式）')
     parser.add_argument('--test-connection', action='store_true', help='测试API连接')
     parser.add_argument('--parallel', type=int, metavar='N', help='并行处理的线程数 (默认串行处理)')
     parser.add_argument('--continue-on-error', action='store_true', help='遇到错误时继续处理其他文件')
@@ -192,6 +203,16 @@ def main():
                        default='high', help='API使用模式 (默认: high)')
     
     args = parser.parse_args()
+    
+    # 检查参数冲突
+    if args.correct and args.only_correct:
+        print("❌ 错误: --correct 和 --only-correct 不能同时使用")
+        sys.exit(1)
+    
+    # 如果没有指定任何模式，默认使用完整模式
+    if not args.correct and not args.only_correct:
+        args.correct = True
+        print("💡 默认使用完整模式：将生成详细报告和修正文件")
     
     try:
         # 初始化错误检测器
@@ -232,11 +253,14 @@ def main():
             print("使用 --dry-run 参数只是预览，未实际处理文件")
             return
         
-        # 确认处理
+        # 确认处理模式
         if len(files) > 1:
             print(f"\n📊 批量处理统计:")
             print(f"   文件数量: {len(files)}")
-            print(f"   处理模式: {'只生成修正文件' if args.only_correct else '生成报告和修正文件'}")
+            if args.only_correct:
+                print(f"   处理模式: 快速模式（只生成修正文件）")
+            else:
+                print(f"   处理模式: 完整模式（生成报告和修正文件）")
             print(f"   API模式: {args.api_mode.upper()}")
             print(f"   API密钥: {api_key[:8]}...{api_key[-4:]}")
             
@@ -256,7 +280,7 @@ def main():
         
         # 并行处理 (如果指定)
         if args.parallel and args.parallel > 1:
-            print(f"📄 使用 {args.parallel} 个线程并行处理...")
+            print(f"🔄 使用 {args.parallel} 个线程并行处理...")
             from concurrent.futures import ThreadPoolExecutor, as_completed
             
             with ThreadPoolExecutor(max_workers=args.parallel) as executor:
@@ -318,12 +342,13 @@ def main():
         successful = len([r for r in results if r['status'] == 'success'])
         failed = len(results) - successful
         total_time = sum(r['processing_time'] for r in results)
+        reports_generated = len([r for r in results if r['status'] == 'success' and r['report_path']])
         
         print("\n" + "=" * 60)
         if len(files) > 1:
-            print("🎉 批量处理完成！")
+            print("🎉 批量处理完成!")
         else:
-            print("🎉 处理完成！")
+            print("🎉 处理完成!")
         print("=" * 60)
         print(f"📊 处理统计:")
         print(f"   总文件数: {len(results)}")
@@ -333,6 +358,10 @@ def main():
         print(f"   总耗时: {total_time:.1f}秒")
         if successful > 0:
             print(f"   平均耗时: {total_time/successful:.1f}秒/文件")
+        
+        print(f"\n📋 输出统计:")
+        print(f"   生成报告: {reports_generated}")
+        print(f"   生成修正文件: {successful}")
         
         # 显示输出目录
         if successful > 0:

@@ -29,12 +29,16 @@ class ErrorDetector:
         segments = self.text_processor.parse_transcription_file(input_file)
         print(f"解析得到 {len(segments)} 个文本段落")
         
+        # 过滤掉空文本段落
+        valid_segments = [seg for seg in segments if seg.get('text', '').strip()]
+        print(f"有效段落数: {len(valid_segments)}")
+        
         # 2. 批量检测和自动修正 - 使用优化版批量处理
         print("开始错误检测和自动修正...")
         print("使用批量处理模式，大幅减少API调用次数和token消耗...")
         
         start_time = time.time()
-        results = self.glm_client.batch_detect_and_correct_segments(segments)
+        results = self.glm_client.batch_detect_and_correct_segments(valid_segments)
         end_time = time.time()
         
         processing_time = end_time - start_time
@@ -133,7 +137,7 @@ class ErrorDetector:
 
     def _generate_corrected_file(self, results: List[Dict], input_file: str) -> str:
         """
-        生成修正后的对话文件
+        生成修正后的对话文件 - 修复版本，保持原始格式
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = os.path.splitext(os.path.basename(input_file))[0]
@@ -151,22 +155,28 @@ class ErrorDetector:
                 
                 # 使用修正后的文本，如果没有修正则使用原文
                 if 'error' in result:
-                    # API调用出错，使用原文
+                    # API调用出错，使用原文并标记错误
                     display_text = result.get('text', '【处理出错】')
                     f.write(f"{speaker} {timestamp}\n")
                     f.write(f"❌ {display_text}\n\n")
                 
                 elif result.get('has_errors', False) and result.get('corrected_text'):
-                    # 有修正
+                    # 有修正，使用修正后的文本
                     corrected_text = result.get('corrected_text', result.get('text', ''))
-                    f.write(f"{speaker} {timestamp}\n")
-                    f.write(f"{corrected_text}\n\n")
+                    # 如果修正文本包含多行，保持原有的换行格式
+                    if '\n' in corrected_text:
+                        f.write(f"{speaker} {timestamp}\n")
+                        f.write(f"{corrected_text}\n\n")
+                    else:
+                        f.write(f"{speaker} {timestamp}\n")
+                        f.write(f"{corrected_text}\n\n")
                 
                 else:
-                    # 无需修正
+                    # 无需修正，使用原文
                     original_text = result.get('text', '')
-                    f.write(f"{speaker} {timestamp}\n")
-                    f.write(f"{original_text}\n\n")
+                    if original_text.strip():  # 只有非空文本才输出
+                        f.write(f"{speaker} {timestamp}\n")
+                        f.write(f"{original_text}\n\n")
         
         return corrected_path
 
@@ -198,3 +208,38 @@ class ErrorDetector:
         print(f"快速修正: {quick_fix_count} ({quick_fix_count/total*100:.1f}%)")
         print(f"预过滤跳过: {pre_filter_count} ({pre_filter_count/total*100:.1f}%)")
         print("=" * 50)
+
+    def detect_and_correct_file_only_correct(self, input_file: str) -> str:
+        """
+        只生成修正文件，不生成检测报告 - 用于 --only-correct 模式
+        """
+        print(f"开始处理文件: {input_file}")
+        
+        # 1. 解析转录文件
+        segments = self.text_processor.parse_transcription_file(input_file)
+        print(f"解析得到 {len(segments)} 个文本段落")
+        
+        # 过滤掉空文本段落
+        valid_segments = [seg for seg in segments if seg.get('text', '').strip()]
+        print(f"有效段落数: {len(valid_segments)}")
+        
+        # 2. 批量检测和自动修正
+        print("开始错误检测和自动修正（仅生成修正文件）...")
+        
+        start_time = time.time()
+        results = self.glm_client.batch_detect_and_correct_segments(valid_segments)
+        end_time = time.time()
+        
+        processing_time = end_time - start_time
+        print(f"批量处理完成，耗时: {processing_time:.1f}秒")
+        
+        # 3. 生成修正版本文件
+        corrected_path = self._generate_corrected_file(results, input_file)
+        
+        # 4. 生成统计摘要
+        self._print_correction_summary(results)
+        
+        print(f"处理完成！")
+        print(f"📝 修正文件: {corrected_path}")
+        
+        return corrected_path
